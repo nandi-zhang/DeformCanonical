@@ -1,0 +1,19 @@
+# configs/data/tiny.yaml
+name: synthetic
+generation:
+  num_objects: 20
+  deformations_per_object: 10
+  deformation_magnitude_min: 0.0
+  deformation_magnitude_max: 0.4
+  noise_std: 0.005
+pointcloud:
+  num_points_canonical: 512
+  num_points_observed: 256
+  use_normals: true
+split:
+  train: 0.8
+  val: 0.1
+  test: 0.1
+virtual_content:
+  num_surface_points: 32
+  num_interior_points: 16

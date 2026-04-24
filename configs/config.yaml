@@ -1,0 +1,16 @@
+# config.yaml — root config, composes all sub-configs
+defaults:
+  - model: deformation_field
+  - data: synthetic
+  - train: base
+  - _self_
+
+project_name: canonical_ar
+run_name: ???         # must be set at launch, e.g. +run_name=exp001
+seed: 42
+device: cuda
+
+logging:
+  use_wandb: false    # flip to true when running real experiments
+  log_every_n_steps: 50
+  vis_every_n_steps: 200

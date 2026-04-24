@@ -1,0 +1,34 @@
+# Core
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# 3D / Rendering
+trimesh>=3.22.0
+pyrender>=0.1.45
+pyglet<2          # pyrender dependency
+open3d>=0.17.0
+
+# Gaussian Splatting (we call gsplat)
+gsplat>=0.1.0
+
+# Simulation
+# taichi>=1.6.0   # install separately: pip install taichi
+
+# Data / Config
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+h5py>=3.8.0
+tqdm>=4.65.0
+
+# Visualization
+matplotlib>=3.7.0
+wandb>=0.15.0
+
+# Image
+opencv-python>=4.7.0
+Pillow>=9.5.0
+
+# Optional: for ShapeNet loading
+# PyMCubes>=0.1.2

@@ -1,0 +1,83 @@
+model:
+  name: deformation_field
+  encoder:
+    type: pointnet_plus
+    input_dim: 6
+    output_dim: 256
+    hidden_dims:
+    - 64
+    - 128
+    - 256
+  decoder:
+    type: mlp
+    latent_dim: 256
+    hidden_dims:
+    - 256
+    - 256
+    - 256
+    - 256
+    output_dim: 3
+    use_positional_encoding: true
+    positional_encoding_freqs: 6
+  canonical_encoder:
+    type: pointnet_plus
+    input_dim: 6
+    output_dim: 256
+    hidden_dims:
+    - 64
+    - 128
+    - 256
+  fusion:
+    type: concat_and_project
+    output_dim: 256
+data:
+  name: synthetic
+  generation:
+    num_objects: 20
+    deformations_per_object: 10
+    deformation_magnitude_min: 0.0
+    deformation_magnitude_max: 0.4
+    noise_std: 0.005
+  pointcloud:
+    num_points_canonical: 512
+    num_points_observed: 256
+    use_normals: true
+  split:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+  virtual_content:
+    num_surface_points: 32
+    num_interior_points: 16
+train:
+  batch_size: 4
+  num_epochs: 10
+  num_workers: 0
+  optimizer:
+    type: adamw
+    lr: 0.0001
+    weight_decay: 0.0001
+    betas:
+    - 0.9
+    - 0.999
+  scheduler:
+    type: cosine_annealing
+    T_max: 10
+    eta_min: 1.0e-06
+  loss:
+    chamfer_weight: 1.0
+    smoothness_weight: 0.1
+    magnitude_weight: 0.01
+    attachment_weight: 1.0
+  checkpointing:
+    save_every_n_epochs: 5
+    keep_last_k: 3
+    save_dir: checkpoints/
+project_name: canonical_ar
+run_name: smoke
+seed: 42
+device: cuda
+logging:
+  use_wandb: false
+  log_every_n_steps: 50
+  vis_every_n_steps: 200
