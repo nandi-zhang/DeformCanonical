@@ -230,15 +230,17 @@ class ShapeNetMeshLoader:
             cache_key = path.replace("/", "_").replace(".", "_")
             cache_path = f"{self.cache_dir}/{cache_key}.npz"
             if os.path.exists(cache_path):
-                data = np.load(cache_path)
-                # Reconstruct minimal mesh for deformation
-                mesh = trimesh.Trimesh(
-                    vertices=data["vertices"],
-                    faces=data["faces"],
-                    process=False,
-                )
-                # Return cached surface samples too
-                return mesh, False, idx, data["pts"], data["norms"], data["rgb"]
+                try:
+                    data = np.load(cache_path)
+                    mesh = trimesh.Trimesh(
+                        vertices=data["vertices"].astype(np.float64),
+                        faces=data["faces"],
+                        process=False,  # skip all repair — already clean in cache
+                    )
+                    return mesh, False, obj_seed, \
+                        data["pts"], data["norms"], data["rgb"]
+                except Exception:
+                    pass
         
         result = load_shapenet_mesh(path)
         if result[0] is None:
