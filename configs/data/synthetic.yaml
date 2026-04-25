@@ -1,27 +1,26 @@
-# configs/data/synthetic.yaml
 name: synthetic
 
-# Synthetic data generation parameters
-generation:
-  num_objects: 500          # unique canonical shapes
-  deformations_per_object: 20
-  deformation_magnitude_min: 0.0   # 0 = rigid, covers rigid case naturally
-  deformation_magnitude_max: 0.4   # in normalized object units
-  noise_std: 0.005                 # sensor noise simulation
+shapenet_root: /kaggle/input/shapenetcore/ShapeNetCore  # update path as needed
 
-# Point cloud sampling
+generation:
+  num_objects: 400
+  deformations_per_object: 20
+  deformation_magnitude_min: 0.0
+  deformation_magnitude_max: 0.4
+  noise_std: 0.005
+
 pointcloud:
   num_points_canonical: 2048
-  num_points_observed: 1024        # fewer, simulates partial observation
+  num_points_observed: 1024
   use_normals: true
 
-# Train/val/test split
 split:
   train: 0.8
   val: 0.1
   test: 0.1
 
-# Virtual content sampling (for attachment evaluation)
 virtual_content:
-  num_surface_points: 64    # points registered on object surface
-  num_interior_points: 32   # points registered in object interior
+  num_surface_points: 64
+  num_interior_points: 0   # disabled for ShapeNet — complex meshes
+
+visibility_threshold: 0.15

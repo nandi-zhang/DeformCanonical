@@ -1,31 +1,25 @@
-# configs/model/deformation_field.yaml
 name: deformation_field
 
-# Encoder: processes observed point cloud into a latent code
 encoder:
-  type: pointnet_plus   # swap to transformer later for CVPR
-  input_dim: 6          # xyz + normals
+  type: pointnet_plus
+  input_dim: 9    # xyz(3) + normals(3) + rgb(3) — xyz passed separately, feat=normals+rgb=6
   output_dim: 256
   hidden_dims: [64, 128, 256]
 
-# Deformation field decoder: given query point in canonical space
-# + latent code, outputs displacement vector
 decoder:
   type: mlp
   latent_dim: 256
   hidden_dims: [256, 256, 256, 256]
-  output_dim: 3         # displacement (dx, dy, dz)
+  output_dim: 3
   use_positional_encoding: true
   positional_encoding_freqs: 6
 
-# Canonical shape encoder: encodes the Gaussian splat / reference pointcloud
 canonical_encoder:
   type: pointnet_plus
-  input_dim: 6
+  input_dim: 9
   output_dim: 256
   hidden_dims: [64, 128, 256]
 
-# How latent codes are fused
 fusion:
-  type: concat_and_project   # concat(obs_code, canonical_code) -> fused_code
+  type: cross_attention
   output_dim: 256
