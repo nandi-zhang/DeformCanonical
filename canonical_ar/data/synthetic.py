@@ -36,7 +36,7 @@ from canonical_ar.utils.partial_observation import simulate_partial_observation
 
 # ── ShapeNet mesh loading ──────────────────────────────────────────────────────
 
-def load_shapenet_mesh(obj_path: str) -> tuple[trimesh.Trimesh, bool]:
+def load_shapenet_mesh(obj_path: str) -> tuple:
     """
     Load a ShapeNet .obj mesh with texture if available.
     Returns (mesh, has_texture).
@@ -200,8 +200,9 @@ class ShapeNetMeshLoader:
     """
     def __init__(self, shapenet_root: str, max_meshes: int = 500):
         self.paths = []
-        pattern = os.path.join(shapenet_root, '**', '*.obj')
-        all_paths = glob.glob(pattern, recursive=True)
+        pattern_obj = os.path.join(shapenet_root, '**', '*.obj')
+        pattern_off = os.path.join(shapenet_root, '**', '*.off')
+        all_paths = glob.glob(pattern_obj, recursive=True) + glob.glob(pattern_off, recursive=True)
         # Filter to model_normalized.obj preferentially
         normalized = [p for p in all_paths if 'model_normalized' in p]
         other = [p for p in all_paths if 'model_normalized' not in p]

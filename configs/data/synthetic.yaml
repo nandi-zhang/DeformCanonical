@@ -1,6 +1,6 @@
 name: synthetic
 
-shapenet_root: /kaggle/input/shapenetcore/ShapeNetCore  # update path as needed
+shapenet_root: /kaggle/working/ModelNet40 # update path as needed
 
 generation:
   num_objects: 400
