@@ -148,7 +148,18 @@ def main(cfg: DictConfig):
     if resume_path:
         log.info(f"Resuming from: {resume_path}")
         ckpt = torch.load(resume_path, map_location=device)
-        model.load_state_dict(ckpt["model_state"])
+        # Strip 'module.' prefix if checkpoint was saved without DataParallel
+        # and current model has it (or vice versa)
+        state_dict = ckpt["model_state"]
+        model_is_wrapped = hasattr(model, 'module')
+        ckpt_is_wrapped = any(k.startswith('module.') for k in state_dict.keys())
+        if model_is_wrapped and not ckpt_is_wrapped:
+            # Add module. prefix
+            state_dict = {'module.' + k: v for k, v in state_dict.items()}
+        elif not model_is_wrapped and ckpt_is_wrapped:
+            # Strip module. prefix
+            state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
         optimizer.load_state_dict(ckpt["optimizer_state"])
         scheduler.load_state_dict(ckpt["scheduler_state"])
         start_epoch = ckpt["epoch"] + 1
