@@ -450,3 +450,6 @@ def build_dataloaders(cfg: DictConfig):
         DataLoader(val_ds,   shuffle=False, **loader_kw),
         DataLoader(test_ds,  shuffle=False, **loader_kw),
     )
+
+# Backward compatibility alias
+SyntheticDeformationDataset = ShapeNetDeformationDataset

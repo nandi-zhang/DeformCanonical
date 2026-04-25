@@ -30,7 +30,7 @@ from tqdm import tqdm
 from collections import defaultdict
 
 from canonical_ar.models.deformation_field import DeformationFieldNet
-from canonical_ar.data.synthetic import SyntheticDeformationDataset
+from canonical_ar.data.synthetic import ShapeNetDeformationDataset
 from torch.utils.data import DataLoader
 
 log = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ def main(cfg: DictConfig):
 
     # Build test dataset
     dc = train_cfg.data
-    test_ds = SyntheticDeformationDataset(
+    test_ds = ShapeNetDeformationDataset(
         split="test",
         seed=42,
         n_objects=dc.generation.num_objects,
