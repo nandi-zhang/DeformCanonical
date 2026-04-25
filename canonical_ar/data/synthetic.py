@@ -200,25 +200,42 @@ class ShapeNetMeshLoader:
     """
     def __init__(self, shapenet_root: str, max_meshes: int = 500, cache_dir: str = None):
         self.cache_dir = cache_dir
-        self.paths = []
-        pattern_obj = os.path.join(shapenet_root, '**', '*.obj')
-        pattern_off = os.path.join(shapenet_root, '**', '*.off')
-        all_paths = glob.glob(pattern_obj, recursive=True) + glob.glob(pattern_off, recursive=True)
-        # Filter to model_normalized.obj preferentially
-        normalized = [p for p in all_paths if 'model_normalized' in p]
-        other = [p for p in all_paths if 'model_normalized' not in p]
-        candidates = normalized + other
-        if len(candidates) > max_meshes:
+        self.shapenet_root = shapenet_root
+
+        # If cache has a paths manifest, use it directly — guarantees no misses
+        if cache_dir:
+            paths_file = os.path.join(cache_dir, "cached_paths.txt")
+            if os.path.exists(paths_file):
+                with open(paths_file) as f:
+                    all_paths = [l.strip() for l in f if l.strip()]
+                print(f"ShapeNetMeshLoader: loaded {len(all_paths)} paths from cache manifest")
+            else:
+                # Fall back to glob + filter
+                pattern_obj = os.path.join(shapenet_root, '**', '*.obj')
+                pattern_off = os.path.join(shapenet_root, '**', '*.off')
+                all_paths = glob.glob(pattern_obj, recursive=True) + \
+                            glob.glob(pattern_off, recursive=True)
+                cached = set(os.listdir(cache_dir))
+                all_paths = [
+                    p for p in all_paths
+                    if p.replace("/", "_").replace(".", "_") + ".npz" in cached
+                ]
+                print(f"ShapeNetMeshLoader: {len(all_paths)} meshes with cache entries")
+        else:
+            pattern_obj = os.path.join(shapenet_root, '**', '*.obj')
+            pattern_off = os.path.join(shapenet_root, '**', '*.off')
+            all_paths = glob.glob(pattern_obj, recursive=True) + \
+                        glob.glob(pattern_off, recursive=True)
+
+        if len(all_paths) > max_meshes:
             rng = np.random.default_rng(42)
-            idx = rng.choice(len(candidates), size=max_meshes, replace=False)
-            candidates = [candidates[i] for i in idx]
-        self.paths = candidates
+            idx = rng.choice(len(all_paths), size=max_meshes, replace=False)
+            all_paths = [all_paths[i] for i in idx]
+
+        self.paths = all_paths
         if len(self.paths) == 0:
-            raise ValueError(
-                f"No .obj files found in {shapenet_root}. "
-                "Check that ShapeNet is downloaded correctly."
-            )
-        print(f"ShapeNetMeshLoader: found {len(self.paths)} meshes")
+            raise ValueError(f"No meshes found in {shapenet_root}")
+        print(f"ShapeNetMeshLoader: using {len(self.paths)} meshes")
 
     def __len__(self):
         return len(self.paths)
