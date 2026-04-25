@@ -66,7 +66,8 @@ def run_batch(
 
     # Also need deformed canonical points for Chamfer loss.
     # Run decoder over the full canonical point cloud.
-    decoder_out_full = model.decoder(batch["canonical_xyz"], out["z"])
+    inner_model = model.module if hasattr(model, 'module') else model
+    decoder_out_full = inner_model.decoder(batch["canonical_xyz"], out["z"])
     deformed_canonical = decoder_out_full["deformed_pts"]
 
     losses = loss_fn(
