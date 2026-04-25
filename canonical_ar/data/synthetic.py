@@ -198,7 +198,8 @@ class ShapeNetMeshLoader:
                 <model_id>/
                     models/model_normalized.obj
     """
-    def __init__(self, shapenet_root: str, max_meshes: int = 500):
+    def __init__(self, shapenet_root: str, max_meshes: int = 500, cache_dir: str = None):
+        self.cache_dir = cache_dir
         self.paths = []
         pattern_obj = os.path.join(shapenet_root, '**', '*.obj')
         pattern_off = os.path.join(shapenet_root, '**', '*.off')
@@ -222,14 +223,29 @@ class ShapeNetMeshLoader:
     def __len__(self):
         return len(self.paths)
 
-    def get(self, idx: int) -> tuple[trimesh.Trimesh, bool, int]:
-        """Returns (mesh, has_texture, obj_seed) or None if loading fails."""
+    def get(self, idx: int):
         path = self.paths[idx % len(self.paths)]
-        mesh, has_texture = load_shapenet_mesh(path)
-        if mesh is None:
+        
+        if self.cache_dir:
+            cache_key = path.replace("/", "_").replace(".", "_")
+            cache_path = f"{self.cache_dir}/{cache_key}.npz"
+            if os.path.exists(cache_path):
+                data = np.load(cache_path)
+                # Reconstruct minimal mesh for deformation
+                mesh = trimesh.Trimesh(
+                    vertices=data["vertices"],
+                    faces=data["faces"],
+                    process=False,
+                )
+                # Return cached surface samples too
+                return mesh, False, idx, data["pts"], data["norms"], data["rgb"]
+        
+        result = load_shapenet_mesh(path)
+        if result[0] is None:
             return None
+        mesh, has_texture = result
         mesh = normalize_mesh(mesh)
-        return mesh, has_texture, idx
+        return mesh, has_texture, idx, None, None, None
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
