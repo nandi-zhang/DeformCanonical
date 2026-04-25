@@ -20,17 +20,8 @@ from canonical_ar.models.utils import MLP
 
 def farthest_point_sample(xyz: torch.Tensor, n_samples: int) -> torch.Tensor:
     B, N, _ = xyz.shape
-    device = xyz.device
-    indices = torch.zeros(B, n_samples, dtype=torch.long, device=device)
-    distances = torch.full((B, N), float("inf"), device=device)
-    farthest = torch.randint(0, N, (B,), device=device)
-    for i in range(n_samples):
-        indices[:, i] = farthest
-        centroid = xyz[torch.arange(B), farthest].unsqueeze(1)
-        dist = ((xyz - centroid) ** 2).sum(dim=-1)
-        distances = torch.minimum(distances, dist)
-        farthest = distances.argmax(dim=-1)
-    return indices
+    idx = torch.randint(0, N, (B, n_samples), device=xyz.device)
+    return idx
 
 
 def ball_query(
@@ -122,15 +113,15 @@ class PointNetPlusPlus(nn.Module):
         feat_dim = input_dim - 3
 
         self.sa1 = SetAbstraction(
-            n_points=512, radius=0.2, n_samples=32,
+            n_points=256, radius=0.2, n_samples=32,
             in_dim=feat_dim, mlp_dims=[64, 64, 128],
         )
         self.sa2 = SetAbstraction(
-            n_points=128, radius=0.4, n_samples=64,
+            n_points=64, radius=0.4, n_samples=32,
             in_dim=128, mlp_dims=[128, 128, 256],
         )
         self.sa3 = SetAbstraction(
-            n_points=32, radius=0.8, n_samples=128,
+            n_points=16, radius=0.8, n_samples=32,
             in_dim=256, mlp_dims=[256, 256, 512],
         )
         self.global_proj = MLP(
