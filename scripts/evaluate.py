@@ -155,6 +155,7 @@ def main(cfg: DictConfig):
     dc = train_cfg.data
     test_ds = SyntheticDeformationDataset(
         split="test",
+        seed=42,
         n_objects=dc.generation.num_objects,
         deformations_per_object=dc.generation.deformations_per_object,
         n_canonical_pts=dc.pointcloud.num_points_canonical,

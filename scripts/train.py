@@ -4,7 +4,7 @@ Main training script.
 Launch with:
     python scripts/train.py +run_name=exp001
     python scripts/train.py +run_name=exp002 train.batch_size=32
-    python scripts/train.py +run_name=ablation_no_smooth train.loss.smoothness_weight=0.0
+    python scripts/train.py +run_name=exp002 +resume=checkpoints/checkpoint_best.pt
 """
 
 import os
@@ -50,33 +50,34 @@ def move_batch(batch: dict, device: torch.device) -> dict:
 
 
 def run_batch(
-    model: DeformationFieldNet,
+    model: torch.nn.Module,
     loss_fn: DeformationLoss,
     batch: dict,
 ) -> dict:
-    """Forward pass + loss computation. Shared between train and val."""
-    # Encode both point clouds and decode deformation for query points
+    """
+    Forward pass + loss computation.
+
+    Runs the model to get z, then decodes over the full canonical
+    point cloud (not just query points) to get the deformation field
+    for Chamfer + smoothness supervision.
+    """
     out = model(
         canonical_xyz=batch["canonical_xyz"],
         canonical_feat=batch["canonical_feat"],
         obs_xyz=batch["obs_xyz"],
         obs_feat=batch["obs_feat"],
-        query_pts=batch["query_pts"],
+        query_pts=batch["query_pts"],   # needed for forward pass shape
     )
 
-    # Also need deformed canonical points for Chamfer loss.
-    # Run decoder over the full canonical point cloud.
-    inner_model = model.module if hasattr(model, 'module') else model
+    # Decode over full canonical cloud for geometric losses
+    inner_model = model.module if hasattr(model, "module") else model
     decoder_out_full = inner_model.decoder(batch["canonical_xyz"], out["z"])
-    deformed_canonical = decoder_out_full["deformed_pts"]
 
     losses = loss_fn(
-        deformed_canonical=deformed_canonical,
+        deformed_canonical=decoder_out_full["deformed_pts"],
         displacements=decoder_out_full["displacements"],
-        deformed_query=out["deformed_pts"],
         obs_xyz=batch["obs_xyz"],
         canonical_pts=batch["canonical_xyz"],
-        gt_deformed_query=batch["gt_deformed_query"],
     )
     return losses
 
@@ -103,7 +104,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, cfg, tag="latest"):
     path = ckpt_dir / f"checkpoint_{tag}.pt"
     torch.save({
         "epoch": epoch,
-        "model_state": model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+        "model_state": model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "scheduler_state": scheduler.state_dict(),
         "cfg": OmegaConf.to_container(cfg),
@@ -113,7 +114,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, cfg, tag="latest"):
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
-    # ------------------------------------------------------------------ setup
+    # ── setup ────────────────────────────────────────────────────────────────
     torch.manual_seed(cfg.seed)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     log.info(f"Using device: {device}")
@@ -126,12 +127,12 @@ def main(cfg: DictConfig):
             config=OmegaConf.to_container(cfg, resolve=True),
         )
 
-    # ------------------------------------------------------------------ data
+    # ── data ─────────────────────────────────────────────────────────────────
     log.info("Building dataloaders...")
     train_loader, val_loader, _ = build_dataloaders(cfg)
     log.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
-    # ----------------------------------------------------------------- model
+    # ── model ────────────────────────────────────────────────────────────────
     model = DeformationFieldNet(cfg).to(device)
     if torch.cuda.device_count() > 1:
         log.info(f"Using {torch.cuda.device_count()} GPUs")
@@ -143,30 +144,26 @@ def main(cfg: DictConfig):
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
-    # ── Resume from checkpoint if specified ──────────────────────────────
+    # ── resume ───────────────────────────────────────────────────────────────
     start_epoch = 0
     resume_path = cfg.get("resume", None)
     if resume_path:
         log.info(f"Resuming from: {resume_path}")
         ckpt = torch.load(resume_path, map_location=device)
-        # Strip 'module.' prefix if checkpoint was saved without DataParallel
-        # and current model has it (or vice versa)
         state_dict = ckpt["model_state"]
-        model_is_wrapped = hasattr(model, 'module')
-        ckpt_is_wrapped = any(k.startswith('module.') for k in state_dict.keys())
+        model_is_wrapped = hasattr(model, "module")
+        ckpt_is_wrapped = any(k.startswith("module.") for k in state_dict.keys())
         if model_is_wrapped and not ckpt_is_wrapped:
-            # Add module. prefix
-            state_dict = {'module.' + k: v for k, v in state_dict.items()}
+            state_dict = {"module." + k: v for k, v in state_dict.items()}
         elif not model_is_wrapped and ckpt_is_wrapped:
-            # Strip module. prefix
-            state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
+            state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
         model.load_state_dict(state_dict)
         optimizer.load_state_dict(ckpt["optimizer_state"])
         scheduler.load_state_dict(ckpt["scheduler_state"])
         start_epoch = ckpt["epoch"] + 1
         log.info(f"Resumed from epoch {ckpt['epoch']}, starting at {start_epoch}")
 
-    # --------------------------------------------------------------- training
+    # ── training loop ────────────────────────────────────────────────────────
     global_step = 0
     best_val_loss = float("inf")
     ckpt_cfg = cfg.train.checkpointing
@@ -183,15 +180,12 @@ def main(cfg: DictConfig):
             losses = run_batch(model, loss_fn, batch)
             losses["loss"].backward()
 
-            # Gradient clipping — important for stability with FiLM layers
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            # Accumulate
             for k, v in losses.items():
                 epoch_losses[k] = epoch_losses.get(k, 0.0) + v.item()
 
-            # Step-level logging
             if global_step % cfg.logging.log_every_n_steps == 0:
                 log_dict = {f"train/{k}": v.item() for k, v in losses.items()}
                 log_dict["train/lr"] = scheduler.get_last_lr()[0]
@@ -203,11 +197,10 @@ def main(cfg: DictConfig):
 
         scheduler.step()
 
-        # --------------------------------------------------------- validation
+        # ── validation ───────────────────────────────────────────────────────
         val_losses = evaluate(model, loss_fn, val_loader, device, max_batches=50)
         val_loss = val_losses["loss"]
 
-        # Epoch-level logging
         n_batches = len(train_loader)
         log_dict = {f"train_epoch/{k}": v / n_batches for k, v in epoch_losses.items()}
         log_dict.update({f"val/{k}": v for k, v in val_losses.items()})
@@ -217,13 +210,13 @@ def main(cfg: DictConfig):
             f"Epoch {epoch+1} | "
             f"train_loss={epoch_losses.get('loss', 0)/n_batches:.4f} | "
             f"val_loss={val_loss:.4f} | "
-            f"val_attach={val_losses.get('loss_attachment', 0):.4f}"
+            f"val_chamfer={val_losses.get('loss_chamfer', 0):.4f}"
         )
 
         if cfg.logging.use_wandb:
             wandb.log(log_dict, step=global_step)
 
-        # ---------------------------------------------------- checkpointing
+        # ── checkpointing ────────────────────────────────────────────────────
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_checkpoint(model, optimizer, scheduler, epoch, cfg, tag="best")

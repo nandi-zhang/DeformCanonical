@@ -1,19 +1,29 @@
 """
-DeformationFieldNet: the top-level model.
+DeformationFieldNet v2 — with cross-attention fusion.
 
-Takes:
-  - canonical point cloud (from pre-computed Gaussian splat / scan)
-  - observed point cloud (from RGB-D at runtime)
-  - query points in canonical space (virtual content positions)
+Architecture change from v1:
+  OLD: canonical → global code
+       observed  → global code
+       concat → MLP → z
 
-Produces:
-  - deformed positions of query points in observation space
-  - deformation field displacements
+  NEW: canonical → SA1 → SA2 → per-point features (128, 256)
+       observed  → SA1 → SA2 → per-point features (128, 256)
+                                        ↓
+               cross-attention with relative positional bias
+               (canonical queries attend to observed keys/values)
+                                        ↓
+               enriched canonical features (128, 256)
+                                        ↓
+               SA3 → global pool → z (256)
 
-The key design principle: rigid objects are a degenerate case.
-A bottle produces near-zero displacements. A pillow produces
-spatially varying displacements. Same model, same weights.
+The decoder is unchanged — same FiLM MLP, same interface.
+Rigid objects are handled by the cross-attention finding the
+corresponding observed region for each canonical point, making
+the rigid transform directly readable from the attention pattern
+rather than having to be inferred from opaque global codes.
 """
+
+from __future__ import annotations
 
 import torch
 import torch.nn as nn
@@ -21,6 +31,7 @@ from omegaconf import DictConfig
 
 from canonical_ar.models.encoder import PointNetPlusPlus
 from canonical_ar.models.decoder import DeformationDecoder
+from canonical_ar.models.cross_attention import CrossAttentionLayer
 
 
 class DeformationFieldNet(nn.Module):
@@ -30,30 +41,31 @@ class DeformationFieldNet(nn.Module):
         dec_cfg = cfg.model.decoder
         fusion_cfg = cfg.model.fusion
 
-        latent_dim = enc_cfg.output_dim
+        feat_dim = 256   # SA2 output dim — hardcoded to match encoder SA2
 
-        # Two encoders: one for the canonical shape, one for the observation.
-        # Shared architecture, separate weights — canonical and observed
-        # point clouds have different distributions (canonical is clean,
-        # observed is partial/noisy).
+        # Two encoders: separate weights, shared architecture
         self.canonical_encoder = PointNetPlusPlus(
             input_dim=enc_cfg.input_dim,
-            output_dim=latent_dim,
+            output_dim=fusion_cfg.output_dim,
         )
         self.obs_encoder = PointNetPlusPlus(
             input_dim=enc_cfg.input_dim,
-            output_dim=latent_dim,
+            output_dim=fusion_cfg.output_dim,
         )
 
-        # Fusion: concat both codes and project to a single latent
-        self.fusion = nn.Sequential(
-            nn.Linear(latent_dim * 2, fusion_cfg.output_dim),
-            nn.LayerNorm(fusion_cfg.output_dim),
-            nn.GELU(),
-            nn.Linear(fusion_cfg.output_dim, fusion_cfg.output_dim),
+        # Cross-attention: canonical attends to observed at SA2 resolution
+        self.cross_attn = CrossAttentionLayer(
+            feat_dim=feat_dim,
+            num_heads=4,
+            dropout=0.1,
+            pos_bias_hidden=64,
         )
 
-        # Deformation field decoder
+        # After cross-attention, pool enriched canonical features to z
+        # using the canonical encoder's SA3 + global_proj
+        # (obs encoder's SA3 is not used in the new pipeline)
+
+        # Deformation field decoder — unchanged
         self.decoder = DeformationDecoder(
             latent_dim=fusion_cfg.output_dim,
             hidden_dim=dec_cfg.hidden_dims[0],
@@ -69,18 +81,35 @@ class DeformationFieldNet(nn.Module):
         obs_feat: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Encode both point clouds into a single fused latent code.
-        Args:
-            canonical_xyz: (B, N_c, 3)
-            canonical_feat: (B, N_c, C)
-            obs_xyz: (B, N_o, 3)
-            obs_feat: (B, N_o, C)
-        Returns:
-            z: (B, fusion_dim)
+        Cross-attention encoding pipeline.
+
+        1. Both point clouds go through SA1+SA2 to get local features
+        2. Canonical features attend to observed features with pos bias
+        3. Enriched canonical features are pooled to global z via SA3
         """
-        z_canonical = self.canonical_encoder(canonical_xyz, canonical_feat)
-        z_obs = self.obs_encoder(obs_xyz, obs_feat)
-        z = self.fusion(torch.cat([z_canonical, z_obs], dim=-1))
+        # Step 1: extract local features at 128-point resolution
+        can_xyz_sa2, can_feat_sa2 = self.canonical_encoder.forward_local(
+            canonical_xyz, canonical_feat
+        )                                         # (B, 128, 3), (B, 128, 256)
+
+        obs_xyz_sa2, obs_feat_sa2 = self.obs_encoder.forward_local(
+            obs_xyz, obs_feat
+        )                                         # (B, 128, 3), (B, 128, 256)
+        # Note: obs has fewer input points (1024 vs 2048) so SA layers
+        # naturally produce a coarser but still 128-point representation
+
+        # Step 2: cross-attention — canonical queries observed
+        enriched_can_feat = self.cross_attn(
+            can_feat=can_feat_sa2,
+            obs_feat=obs_feat_sa2,
+            can_xyz=can_xyz_sa2,
+            obs_xyz=obs_xyz_sa2,
+        )                                         # (B, 128, 256)
+
+        # Step 3: pool enriched features to global z
+        z = self.canonical_encoder.pool_from_local(can_xyz_sa2, enriched_can_feat)
+        # (B, output_dim)
+
         return z
 
     def forward(
@@ -92,20 +121,19 @@ class DeformationFieldNet(nn.Module):
         query_pts: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """
-        Full forward pass.
+        Full forward pass. Interface identical to v1.
 
         Args:
-            canonical_xyz:  (B, N_c, 3) canonical point positions
-            canonical_feat: (B, N_c, C) canonical point features (normals etc.)
-            obs_xyz:        (B, N_o, 3) observed point positions
-            obs_feat:       (B, N_o, C) observed point features
-            query_pts:      (B, Q, 3)   virtual content points in canonical space
+            canonical_xyz:  (B, N_c, 3)
+            canonical_feat: (B, N_c, C)
+            obs_xyz:        (B, N_o, 3)
+            obs_feat:       (B, N_o, C)
+            query_pts:      (B, Q, 3)
 
         Returns dict:
-            z:              (B, fusion_dim)  fused latent code
-            displacements:  (B, Q, 3)        per-query displacement
-            deformed_pts:   (B, Q, 3)        query_pts + displacements
-                                             = virtual content in observation space
+            z:              (B, fusion_dim)
+            displacements:  (B, Q, 3)
+            deformed_pts:   (B, Q, 3)
         """
         z = self.encode(canonical_xyz, canonical_feat, obs_xyz, obs_feat)
         decoder_out = self.decoder(query_pts, z)
@@ -125,11 +153,7 @@ class DeformationFieldNet(nn.Module):
         obs_feat: torch.Tensor,
         query_pts: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Convenience method for runtime inference.
-        Returns only deformed_pts (B, Q, 3) — positions of virtual content
-        in current observation space.
-        """
+        """Runtime inference — returns deformed_pts (B, Q, 3)."""
         self.eval()
         out = self.forward(
             canonical_xyz, canonical_feat,
