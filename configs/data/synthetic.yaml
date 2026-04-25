@@ -1,6 +1,7 @@
 name: synthetic
 
 shapenet_root: /kaggle/working/ModelNet40 # update path as needed
+cache_dir: /kaggle/working/modelnet_cache
 
 generation:
   num_objects: 400

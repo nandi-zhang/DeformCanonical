@@ -265,6 +265,7 @@ class ShapeNetDeformationDataset(Dataset):
     def __init__(
         self,
         shapenet_root: str,
+        cache_dir: str = None,
         n_objects: int = 400,
         deformations_per_object: int = 20,
         n_canonical_pts: int = 2048,
@@ -287,7 +288,7 @@ class ShapeNetDeformationDataset(Dataset):
         self.noise_std = noise_std
         self.visibility_threshold = visibility_threshold
 
-        self.mesh_loader = ShapeNetMeshLoader(shapenet_root, max_meshes=n_objects)
+        self.mesh_loader = ShapeNetMeshLoader(shapenet_root, max_meshes=n_objects, cache_dir=cache_dir)
         n_meshes = len(self.mesh_loader)
 
         rng = np.random.default_rng(seed)
@@ -321,16 +322,23 @@ class ShapeNetDeformationDataset(Dataset):
         obj_idx = flat_idx // self.deformations_per_object
         def_idx = flat_idx % self.deformations_per_object
 
-        # Load mesh — skip and try next if broken
         result = self.mesh_loader.get(obj_idx)
         if result is None:
             return self.__getitem__((idx + 1) % len(self))
-        mesh, has_texture, obj_seed = result
+        mesh, has_texture, obj_seed, cached_pts, cached_norms, cached_rgb = result
 
-        # ── Canonical point cloud ─────────────────────────────────────────
-        can_pts, can_norms, can_rgb = sample_surface_with_color(
-            mesh, self.n_canonical_pts, has_texture, obj_seed
-        )
+        # Use cached point cloud if available, else sample fresh
+        if cached_pts is not None:
+            # Subsample from cached 4096 points to n_canonical_pts
+            rng_sub = np.random.default_rng(seed=obj_seed + def_idx)
+            idx_sub = rng_sub.choice(len(cached_pts), size=self.n_canonical_pts, replace=False)
+            can_pts = cached_pts[idx_sub]
+            can_norms = cached_norms[idx_sub]
+            can_rgb = cached_rgb[idx_sub]
+        else:
+            can_pts, can_norms, can_rgb = sample_surface_with_color(
+                mesh, self.n_canonical_pts, has_texture, obj_seed
+            )
         # Color augmentation for canonical (mild)
         rng_aug = np.random.default_rng(seed=obj_seed + def_idx)
         can_rgb = augment_colors(can_rgb, rng_aug,
@@ -440,6 +448,7 @@ def build_dataloaders(cfg: DictConfig):
 
     shared = dict(
         shapenet_root=dc.shapenet_root,
+        cache_dir=dc.get("cache_dir", None),
         n_objects=gen.num_objects,
         deformations_per_object=gen.deformations_per_object,
         n_canonical_pts=pc.num_points_canonical,
