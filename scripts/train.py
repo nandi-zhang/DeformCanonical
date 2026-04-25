@@ -102,7 +102,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, cfg, tag="latest"):
     path = ckpt_dir / f"checkpoint_{tag}.pt"
     torch.save({
         "epoch": epoch,
-        "model_state": model.state_dict(),
+        "model_state": model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "scheduler_state": scheduler.state_dict(),
         "cfg": OmegaConf.to_container(cfg),
@@ -132,6 +132,9 @@ def main(cfg: DictConfig):
 
     # ----------------------------------------------------------------- model
     model = DeformationFieldNet(cfg).to(device)
+    if torch.cuda.device_count() > 1:
+        log.info(f"Using {torch.cuda.device_count()} GPUs")
+        model = torch.nn.DataParallel(model)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log.info(f"Model parameters: {n_params:,}")
 
@@ -139,12 +142,24 @@ def main(cfg: DictConfig):
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
+    # ── Resume from checkpoint if specified ──────────────────────────────
+    start_epoch = 0
+    resume_path = cfg.get("resume", None)
+    if resume_path:
+        log.info(f"Resuming from: {resume_path}")
+        ckpt = torch.load(resume_path, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        scheduler.load_state_dict(ckpt["scheduler_state"])
+        start_epoch = ckpt["epoch"] + 1
+        log.info(f"Resumed from epoch {ckpt['epoch']}, starting at {start_epoch}")
+
     # --------------------------------------------------------------- training
     global_step = 0
     best_val_loss = float("inf")
     ckpt_cfg = cfg.train.checkpointing
 
-    for epoch in range(cfg.train.num_epochs):
+    for epoch in range(start_epoch, cfg.train.num_epochs):
         model.train()
         epoch_losses = {}
 

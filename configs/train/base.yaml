@@ -26,5 +26,5 @@ loss:
 
 checkpointing:
   save_every_n_epochs: 10
-  keep_last_k: 3
+  keep_last_k: -1
   save_dir: checkpoints/
